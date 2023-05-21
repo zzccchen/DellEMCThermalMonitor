@@ -1,26 +1,12 @@
-﻿using CefSharp;
-using CefSharp.Wpf;
-using CefSharp.Wpf.Internals;
-using Modules.Translation.Custom;
+﻿using DotNet.AccelerateBall;
 using System;
-using System.Buffers;
+using System.ComponentModel;
 using System.Diagnostics;
-using System.Linq;
-using System.Net;
-using System.Text;
-using System.Text.Encodings.Web;
-using System.Text.Json;
-using System.Text.Unicode;
-using System.Threading;
-using System.Threading.Tasks;
+using System.IO;
+using System.Timers;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Documents;
-using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
-using System.Windows.Shapes;
 
 namespace Modules.Translation
 {
@@ -29,213 +15,239 @@ namespace Modules.Translation
     /// </summary>
     public partial class MainPage : Page
     {
-        #region Fields
-        WebClient client = new WebClient();
-        #endregion
-
         #region Methods
+
+        private static string currentPath = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location); // System.Environment.CurrentDirectory;
+        private static string configFileName = "\\config.ini";
+        private static string ipmitoolPath = currentPath + "\\ipmitool.exe";
+        private static string configFilePath = currentPath + configFileName;
+
+        private static string defaultIp = "192.168.1.100";
+        private static string defaultUser = "root";
+        private static string defaultPassword = "calvin";
+        private static string defaultConfigSection = "ipmi";
+        private static int cpu1test = 1;
+
+        private string txtIp;
+        private string txtUser;
+        private string txtPassword;
+        private static System.Timers.Timer timer;
+
         public MainPage()
         {
-            CefSettings _settings = new CefSettings();
-            _settings.UserAgent = "tv.danmaku.bili/6250300 (Linux; U; Android 11; zh_CN; V1824A; Build/RP1A.200720.012; Cronet/81.0.4044.156)";
-            Cef.Initialize(_settings);
             InitializeComponent();
+            initParameter();
+            StartMonitor(); //初始化网络流量监控
             //支持中文输入，但是ime不能定位到光标位置，但是可以在popup里面输入中文
-            Browser.WpfKeyboardHandler = new WpfKeyboardHandler(Browser);
             //支持中文输入以及ime定位但是在popup里面失效，推测是popup没有实体句柄之类的
             //Browser.WpfKeyboardHandler = new WpfImeKeyboardHandler(Browser);
         }
 
-        #endregion
+        #endregion Methods
 
-        #region Events
-        /// <summary>
-        /// 检测ctrl+v自动翻译
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void txtSource_KeyUp(object sender, KeyEventArgs e)
+        public void initParameter()
         {
-            //if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.V)
-            //{
-            //    CommandBindingTranslation_Executed(null, null);
-            //}
-        }
-        /// <summary>
-        /// 退出
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void MenuItemExit_Click(object sender, RoutedEventArgs e)
-        {
-            Application.Current.Shutdown();
-        }
-        /// <summary>
-        /// 跳转项目地址
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void Hyperlink_Click(object sender, RoutedEventArgs e)
-        {
-            var psi = new ProcessStartInfo
+            if (File.Exists(configFilePath))
             {
-                FileName = (sender as Hyperlink).NavigateUri.AbsoluteUri,
-                UseShellExecute = true
-            };
-            Process.Start(psi);
-        }
-        /// <summary>
-        /// 鼠标离开的时候隐藏popup
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void popBro_MouseLeave(object sender, MouseEventArgs e)
-        {
-            if (cheHide.IsChecked.Value == true)
-                popBro.SetCurrentValue(Popup.IsOpenProperty, false);
-        }
-        #endregion
-
-        #region Commands
-        /// <summary>
-        /// 翻译命令
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void CommandBindingTranslation_Executed(object sender, ExecutedRoutedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(txtSource.Text))
-                return;
-            Task.Run(() =>
+                string ip = IniHelper.Read(defaultConfigSection, "ip", defaultIp, configFilePath);
+                string user = IniHelper.Read(defaultConfigSection, "user", defaultUser, configFilePath);
+                string password = IniHelper.Read(defaultConfigSection, "password", defaultPassword, configFilePath);
+                txtIp = ip;
+                txtUser = user;
+                txtPassword = password;
+            }
+            else
             {
-                string msg = string.Empty;
-                string lan = string.Empty;
-                Dispatcher.Invoke(() =>
-                {
-                    msg = txtSource.Text;
-                    lan = togLanguage.IsChecked.Value ? "en" : "zh-Hans";
-                });
-                try
-                {
-                    //zh-Hans
-                    var url = "https://cn.bing.com/ttranslatev3?isVertical=1&&IG=FA5F953F30714718B7F4C1DB9C9EFFBC&IID=translator.5024.1";
-                    var data = Encoding.UTF8.GetBytes($"&fromLang=auto-detect&text={msg}&to={lan}");
-                    client.Headers.Add("Content-type", "application/x-www-form-urlencoded");
-                    var result = client.UploadData(url, data);
-                    var json = Encoding.UTF8.GetString(result);
-                    var temp = JsonDocument.Parse(json);
-                    msg = temp.RootElement.EnumerateArray().First().GetProperty("translations").EnumerateArray().First().GetProperty("text").ToString();
-                }
-                catch (Exception ex)
-                {
-                    msg = ex.Message;
-                }
-
-                Dispatcher.Invoke(() =>
-                {
-                    txtResult.Text = msg;
-                    txtResult.SelectAll();
-                    txtResult.Focus();
-
-                });
-            });
+                IniHelper.Write(defaultConfigSection, "ip", defaultIp, configFilePath);
+                IniHelper.Write(defaultConfigSection, "user", defaultUser, configFilePath);
+                IniHelper.Write(defaultConfigSection, "password", defaultPassword, configFilePath);
+                txtIp = defaultIp;
+                txtUser = defaultUser;
+                txtPassword = defaultPassword;
+            }
         }
-        /// <summary>
-        /// 格式化命令
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void CommandBindingFormat_Executed(object sender, ExecutedRoutedEventArgs e)
+
+        private static string execute(string parameter)
         {
-            if (string.IsNullOrEmpty(txtSource.Text))
-                return;
+            Process process = null;
+            string result = string.Empty;
             try
             {
-                var buffer = new ArrayBufferWriter<byte>();
-                var options = new JsonWriterOptions
-                {
-                    Indented = true,
-                    Encoder = JavaScriptEncoder.Create(UnicodeRanges.All)
-                };
+                process = new Process();
+                process.StartInfo.FileName = "cmd.exe";
+                process.StartInfo.UseShellExecute = false;
+                process.StartInfo.CreateNoWindow = true;
+                process.StartInfo.RedirectStandardInput = true;
+                process.StartInfo.RedirectStandardOutput = true;
+                process.StartInfo.RedirectStandardError = true;
 
-                using var json = new Utf8JsonWriter(buffer, options);
-                JsonDocument.Parse(txtSource.Text).WriteTo(json);
-                json.Flush();
-                txtResult.Text = Encoding.UTF8.GetString(buffer.WrittenSpan.ToArray());
-                txtResult.SelectAll();
-                txtResult.Focus();
+                process.Start();
+
+                process.StandardInput.WriteLine(parameter + "& exit");
+                process.StandardInput.AutoFlush = true;
+                result = process.StandardOutput.ReadToEnd();
+                process.WaitForExit();
+                process.Close();
+                return result;
             }
             catch (Exception ex)
             {
-                txtResult.Text = ex.Message;
+                Console.WriteLine("ExceptionOccurred:{ 0},{ 1}", ex.Message, ex.StackTrace.ToString());
+                return null;
             }
         }
-        /// <summary>
-        /// 选择所有文本命令
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void CommandBindingSelectAll_Executed(object sender, ExecutedRoutedEventArgs e)
+
+        private void Timer_Elapsed(object sender, ElapsedEventArgs e)
         {
-            txtSource.SelectAll();
+            // 这里是你要执行的循环体代码
+            cpu1test += 1;
+            this.CPU1T.Content = "." + cpu1test;
         }
-        /// <summary>
-        /// Run命令
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void CommandBindingGo_Executed(object sender, ExecutedRoutedEventArgs e)
+
+        /*开始监控*/
+
+        private void StartMonitor()
         {
-            if (string.IsNullOrEmpty(txtSource.Text))
-                return;
-            try
+            timer = new System.Timers.Timer(1000);
+            // 设置定时器触发事件的处理方法
+            timer.Elapsed += background_FetchStates_DoWork;
+
+            // 设置定时器为可重复触发
+            timer.AutoReset = false;
+
+            // 启动定时器
+            timer.Start();
+        }
+
+        private void background_FetchStates_DoWork(object sender, ElapsedEventArgs e)
+        {
+            BackgroundWorker bgWorker = new BackgroundWorker();
+            bgWorker.WorkerReportsProgress = true;
+            string ip = txtIp;
+            string user = txtUser;
+            string password = txtPassword;
+
+            string formatSensor = "-I lanplus -H {0} -U {1} -P {2} sensor";
+            string parametersSensor = string.Format(formatSensor, ip, user, password);
+
+            string fullExecuteSensor = ipmitoolPath + " " + parametersSensor;
+
+            // 创建自定义的 RGB 颜色
+
+            while (true)
             {
-                var psi = new ProcessStartInfo
+                bgWorker.ReportProgress(0, "start");
+
+                string result = execute(fullExecuteSensor);
+
+                result = result.Replace("\r\n", "\n");
+                string[] sensorList = result.Split('\n', '\r');
+
+                //this.CPU1.Text = "." + cpu1test;
+                int cpu_flag = 1;
+                foreach (var item in sensorList)
                 {
-                    FileName = txtSource.Text,
-                    UseShellExecute = true
-                };
-                Process.Start(psi);
+                    if (item.Contains("Temp") || item.Contains("CPU Usage"))
+                    {
+                        string[] temp = new string[8];
+                        var src = item.Split('|');
+                        temp[0] = src[0];
+                        temp[1] = src[1];
+                        if (cpu_flag == 1 && temp[0].StartsWith("Temp"))
+                        {
+                            cpu_flag++;
+                            int CPU1_int = int.Parse(src[1].Substring(0, 3));
+                            Application.Current.Dispatcher.Invoke(() =>
+                            {
+                                Color customColorLow = Color.FromRgb(254, 254, 254);
+                                Color customColorMid = Color.FromRgb(253, 213, 59);
+                                Color customColorHig = Color.FromRgb(235, 158, 206);
+
+                                // 创建对应的画刷对象
+                                SolidColorBrush customBrushLow = new SolidColorBrush(customColorLow);
+                                SolidColorBrush customBrushMid = new SolidColorBrush(customColorMid);
+                                SolidColorBrush customBrushHig = new SolidColorBrush(customColorHig);
+                                CPU1T.Content = CPU1_int + "c";
+                                if (CPU1_int >= 85)
+                                {
+                                    this.CPU1T.Foreground = customBrushHig;
+                                }
+                                else if (CPU1_int >= 60)
+                                {
+                                    this.CPU1T.Foreground = customBrushMid;
+                                }
+                                else
+                                {
+                                    this.CPU1T.Foreground = customBrushLow;
+                                }
+                            });
+                            continue;
+                        }
+                        if (cpu_flag == 2 && temp[0].StartsWith("Temp"))
+                        {
+                            int CPU2_int = int.Parse(src[1].Substring(0, 3));
+                            Application.Current.Dispatcher.Invoke(() =>
+                            {
+                                Color customColorLow = Color.FromRgb(254, 254, 254);
+                                Color customColorMid = Color.FromRgb(253, 213, 59);
+                                Color customColorHig = Color.FromRgb(235, 158, 206);
+
+                                // 创建对应的画刷对象
+                                SolidColorBrush customBrushLow = new SolidColorBrush(customColorLow);
+                                SolidColorBrush customBrushMid = new SolidColorBrush(customColorMid);
+                                SolidColorBrush customBrushHig = new SolidColorBrush(customColorHig);
+
+                                CPU2T.Content = CPU2_int + "c";
+                                if (CPU2_int >= 85)
+                                {
+                                    this.CPU2T.Foreground = customBrushHig;
+                                }
+                                else if (CPU2_int >= 60)
+                                {
+                                    this.CPU2T.Foreground = customBrushMid;
+                                }
+                                else
+                                {
+                                    this.CPU2T.Foreground = customBrushLow;
+                                }
+                            });
+                            continue;
+                        }
+                        if (temp[0].StartsWith("CPU Usage"))
+                        {
+                            string[] usage_list = src[1].Split('.');
+                            int usage_int = int.Parse(usage_list[0]);
+                            Application.Current.Dispatcher.Invoke(() =>
+                            {
+                                Color customColorLow = Color.FromRgb(254, 254, 254);
+                                Color customColorMid = Color.FromRgb(253, 213, 59);
+                                Color customColorHig = Color.FromRgb(235, 158, 206);
+
+                                // 创建对应的画刷对象
+                                SolidColorBrush customBrushLow = new SolidColorBrush(customColorLow);
+                                SolidColorBrush customBrushMid = new SolidColorBrush(customColorMid);
+                                SolidColorBrush customBrushHig = new SolidColorBrush(customColorHig);
+
+                                CpuUsage.Content = usage_int + "%";
+                                if (usage_int >= 90)
+                                {
+                                    this.CpuUsage.Foreground = customBrushHig;
+                                }
+                                else
+                                {
+                                    this.CpuUsage.Foreground = customBrushLow;
+                                }
+                            });
+                        }
+                        //lstViewSensor.Items.Add(new ListViewItem(temp));
+                        bgWorker.ReportProgress(1, temp);
+                    }
+                }
+                bgWorker.ReportProgress(100, "completed");
+                // 停止后台任务
             }
-            catch (Exception)
-            {
-            }
+            // 释放资源
+            bgWorker.Dispose();
         }
-        /// <summary>
-        /// 浏览命令
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void CommandBindingBrowser_Executed(object sender, ExecutedRoutedEventArgs e)
-        {
-            Browser.Address = txtAddress.Text;
-        }
-        #endregion
-
-        static SolidColorBrush polygonBrush = new SolidColorBrush(Color.FromArgb(128, 255, 255, 255));
-        /// <summary>
-        /// 按钮点击开始涟漪动画
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void Grid_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var grid = sender as Grid;
-
-            var time = 0.5d;
-            var path = grid.Children[0] as Path;
-            var ellipse = path.Data as EllipseGeometry;
-
-            //设置圆心位置
-            ellipse.Center = e.GetPosition(grid);
-            //根据勾股定理计算涟漪最大长度
-            var maxLength = Math.Sqrt(Math.Pow(grid.ActualWidth, 2) + Math.Pow(grid.ActualHeight, 2));
-            //开始涟漪放缩动画
-            ellipse.BeginAnimation(EllipseGeometry.RadiusXProperty, new DoubleAnimation(0, maxLength, new Duration(TimeSpan.FromSeconds(time))));
-            //开始透明度消失动画
-            path.BeginAnimation(Path.OpacityProperty, new DoubleAnimation(1, 0, new Duration(TimeSpan.FromSeconds(time))));
-        }
-
-      
     }
 }

@@ -32,7 +32,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Modules.Translation\Modules.Translation.csproj" />
+    <PackageReference Include="CefSharp.Wpf" Version="113.1.40" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Win32\Win32.csproj" />
   </ItemGroup>
 
